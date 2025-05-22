@@ -12,7 +12,7 @@ from gi.repository import GLib
 
 # Add the path to our own packages for import (adjust if your velib_python path is different)
 # This is crucial for systems where velib_python is not in the default Python path.
-sys.path.insert(1, "/data/SetupHelper/velib_python")
+sys.path.insert(1, "/opt/victronenergy/dbus-systemcalc-py/ext/velib_python")
 from ve_utils import wrap_dbus_value
 
 
