@@ -19,7 +19,7 @@ class TestMonitor:
         self.transferSwitchStateObj = None
         self.transferSwitchActive = False
         self.currentLimitObj = None
-        self.veBusService = ""
+        self.veBusService = "" # Corrected: Consistent casing
         self.tsInputSearchDelay = 99  # allow search to occur immediately
         self.custom_transfer_switch_name_found = False # New flag to track if custom name is found
 
@@ -108,19 +108,19 @@ class TestMonitor:
             obj = self.theBus.get_object(dbusSystemPath, '/VebusService')
             vebusService = obj.GetText()
         except dbus.exceptions.DBusException as e:
-            if self.veBusService:
+            if self.veBusService: # Corrected: Consistent casing
                 print(f"DEBUG: Multi/Quattro disappeared - /VebusService invalid: {e}")
-            self.veBusService = ""
+            self.veBusService = "" # Corrected: Consistent casing
             self.currentLimitObj = None
             return
 
         if vebusService == "---":
-            if self.veBusService != "":
+            if self.veBusService != "": # Corrected: Consistent casing
                 print("DEBUG: Multi/Quattro disappeared (service string is '---')")
-            self.vebusService = ""
+            self.veBusService = "" # Corrected: Consistent casing
             self.currentLimitObj = None
-        elif self.vebusService == "" or vebusService != self.vebusService:
-            self.vebusService = vebusService
+        elif self.veBusService == "" or vebusService != self.veBusService: # Corrected: Consistent casing
+            self.veBusService = vebusService # Corrected: Consistent casing
             try:
                 self.currentLimitObj = self.theBus.get_object(vebusService, "/Ac/ActiveIn/CurrentLimit")
                 print(f"Discovered VE.Bus service at {vebusService}")
