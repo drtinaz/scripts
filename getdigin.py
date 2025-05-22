@@ -1,5 +1,10 @@
 #!/usr/bin/env python
 
+# this test script finds and gets the state of the digital input which contains the words
+# "transfer switch" in the customname field. this method will work with either kevins exttransferswitch
+# selected for the digital input, or using a bilge pump on/off digital input.
+# this also finds and gets the state value for the active ac input current limit
+
 import dbus
 import sys
 import time
