@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 
-# this script must be ran as root (sudo)
-
 import dbus
 import sys
+import xml.etree.ElementTree as ET # Import ElementTree as ET here
 
 # --- Configuration ---
 BUS_NAME = 'com.victronenergy.settings'
@@ -54,17 +53,13 @@ def remove_victron_settings(settings_to_remove):
         sys.exit(0)
 
     try:
-        # Get the D-Bus object for the specified path
+        # Get the D-Bus object for the specified path (/Settings)
         settings_obj = _get_dbus_interface(BUS_NAME, REMOVE_SETTINGS_OBJECT_PATH)
         if not settings_obj:
-            sys.exit(1) # Error already printed
+            sys.exit(1)
 
-        # Get the D-Bus interface that contains the RemoveSettings method
-        # This is typically on the main service object (no specific interface needed for direct method call)
-        # However, for clarity and robustness, we can specify the BusItem interface if it has it,
-        # or just rely on direct method call on the proxy object if the method is root-level.
-        # Based on Victron examples, it's often a direct method on the top-level object path.
-        settings_interface = dbus.Interface(settings_obj, BUS_NAME) # Or 'org.freedesktop.DBus.Properties' or similar if method is not root
+        # CORRECTED LINE: Use the specific Victron Settings interface
+        settings_interface = dbus.Interface(settings_obj, 'com.victronenergy.Settings')
 
         # Call the RemoveSettings method with the list of paths
         # dbus.Array is important for D-Bus list types.
@@ -92,10 +87,10 @@ def _get_all_children_paths(bus_name, parent_path):
     try:
         bus = dbus.SystemBus()
         obj = bus.get_object(bus_name, parent_path)
-        introspect_iface = dbus.Interface(obj, dbus.INTROSPECTABLE_INTERFACE)
+        # Corrected: Use the full D-Bus interface string for introspection
+        introspect_iface = dbus.Interface(obj, 'org.freedesktop.DBus.Introspectable')
         xml = introspect_iface.Introspect()
 
-        import xml.etree.ElementTree as ET
         root = ET.fromstring(xml)
 
         for node in root.findall('node'):
