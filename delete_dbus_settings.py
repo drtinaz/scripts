@@ -4,14 +4,13 @@ import dbus
 import sys
 
 # --- Configuration ---
-# Reverted to lowercase 'settings' for the BUS_NAME, as it's the D-Bus service identifier.
-BUS_NAME = 'com.victronenergy.settings' # <-- CORRECTED BACK TO LOWERCASE
+BUS_NAME = 'com.victronenergy.settings'
+
 # The D-Bus object path where the RemoveSettings method is available.
 # This is typically '/Settings' for the Victron settings service.
 REMOVE_SETTINGS_OBJECT_PATH = '/Settings'
 
 # The D-Bus interface that contains the RemoveSettings method.
-# Confirmed from introspection: 'com.victronenergy.Settings' (capital 'S')
 REMOVE_SETTINGS_INTERFACE = 'com.victronenergy.Settings' # <-- REMAINS CAPITALIZED
 
 # List of *relative* paths to delete. These paths are relative to REMOVE_SETTINGS_OBJECT_PATH.
@@ -20,7 +19,6 @@ REMOVE_SETTINGS_INTERFACE = 'com.victronenergy.Settings' # <-- REMAINS CAPITALIZ
 #
 # IMPORTANT: Replace with the actual relative paths you want to delete.
 SETTINGS_TO_DELETE = [
-    "RemoteGPIO/Unit1/IP"
 ]
 # Example: ["RemoteGPIO/GPIO1/Type", "RemoteGPIO/GPIO2/Polarity"]
 
