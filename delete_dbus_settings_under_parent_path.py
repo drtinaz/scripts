@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+# this script must be ran as root (sudo)
+
 import dbus
 import sys
 
