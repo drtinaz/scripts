@@ -11,13 +11,33 @@ import time
 import paho.mqtt.client as mqtt
 import threading
 
-# Set up logging for both the launcher and the child processes
-logger = logging.getLogger(__name__)
-# The logging level will be set from the config file.
+# --- BEGIN: CORRECTED LOGGING SETUP ---
+# Get the root logger instance
+logger = logging.getLogger()
+
+# Remove all existing handlers from the root logger
+# This is crucial for running as a service to prevent logging to the wrong place
+for handler in logger.handlers[:]:
+    logger.removeHandler(handler)
+
+# Now configure the logging for the script
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-console_handler = console_handler = logging.StreamHandler(sys.stdout)
-console_handler.setFormatter(formatter)
-logger.addHandler(console_handler)
+
+# Get the directory of the currently running script
+script_dir = os.path.dirname(os.path.abspath(__file__))
+log_file_path = os.path.join(script_dir, 'log')
+
+# Create a FileHandler to write logs to the 'log' file
+file_handler = logging.FileHandler(log_file_path)
+file_handler.setFormatter(formatter)
+
+# Add the FileHandler to the root logger
+logger.addHandler(file_handler)
+
+# Set the root logger's level low enough to catch everything
+# The log level from the config file will filter what is actually written
+logger.setLevel(logging.DEBUG)
+# --- END: CORRECTED LOGGING SETUP ---
 
 # A more reliable way to find velib_python
 try:
@@ -309,6 +329,9 @@ def run_device_service(device_index):
     from dbus.mainloop.glib import DBusGMainLoop
     DBusGMainLoop(set_as_default=True)
     
+    # Log the start of this specific device process
+    logger.info(f"Starting D-Bus service process for device {device_index}.")
+
     config_file_path = os.path.join(os.path.dirname(__file__), 'config.ini')
     config = configparser.ConfigParser()
     if not os.path.exists(config_file_path):
@@ -412,6 +435,9 @@ def main():
     """
     The main launcher function that runs as the parent process.
     """
+    # Log the start of the overall launcher script
+    logger.info("Starting D-Bus Virtual Switch service launcher.")
+
     config_file_path = os.path.join(os.path.dirname(__file__), 'config.ini')
     config = configparser.ConfigParser()
     if not os.path.exists(config_file_path):
