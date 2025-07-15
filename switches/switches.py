@@ -74,6 +74,7 @@ class DbusMyTestSwitch(VeDbusService):
         self.add_path(f'{output_prefix}/Status', 0)
 
         # Add the State path, which will be writable.
+        # Note: The onchangecallback no longer has a _context argument.
         self.add_path(f'{output_prefix}/State', 0, writeable=True, onchangecallback=self.handle_change)
 
         settings_prefix = f'{output_prefix}/Settings'
@@ -82,23 +83,29 @@ class DbusMyTestSwitch(VeDbusService):
         self.add_path(f'{settings_prefix}/Type', 1, writeable=True)
         self.add_path(f'{settings_prefix}/ValidTypes', 7)
 
-    def handle_change(self, path, value, _context):
+    def handle_change(self, path, value):
         """
         Callback function to handle changes to D-Bus paths.
+        The context argument is often unused and can be omitted.
         """
         logger.info(f"Received a change request for {path} to value {value}")
         
-        if "/State" in path:
-            if value not in [0, 1]:
-                logger.warning(f"Invalid state value received: {value}")
-                return False
-            
-            logger.info(f"Switch state for {path} changed to {value}")
-            self[path] = value
-            return True
-        else:
+        # We only expect changes to the /State path
+        if "/State" not in path:
             logger.warning(f"Unhandled change request for path: {path}")
             return False
+
+        # Validate the value
+        if value not in [0, 1]:
+            logger.warning(f"Invalid state value received: {value}")
+            return False
+        
+        # Update the D-Bus value
+        self[path] = value
+        logger.info(f"Successfully changed '{path}' to {value}")
+        
+        # Return True to accept the change
+        return True
 
 def run_device_service(device_index):
     """
