@@ -8,12 +8,14 @@ import random
 import configparser
 import subprocess
 import time
+import paho.mqtt.client as mqtt
+import threading
 
 # Set up logging for both the launcher and the child processes
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+# The logging level will be set from the config file.
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-console_handler = logging.StreamHandler()
+console_handler = console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
@@ -33,8 +35,10 @@ def generate_random_serial(length=16):
 
 class DbusMyTestSwitch(VeDbusService):
 
-    def __init__(self, service_name, device_config, output_configs, serial_number):
-        super().__init__(service_name)
+    def __init__(self, service_name, device_config, output_configs, serial_number, mqtt_config):
+        # Use the modern, recommended registration method.
+        # Paths are added first, then the service is registered.
+        super().__init__(service_name, register=False)
 
         # General device settings
         self.add_path('/Mgmt/ProcessName', 'dbus-victron-virtual')
@@ -47,7 +51,6 @@ class DbusMyTestSwitch(VeDbusService):
         self.add_path('/ProductName', 'Virtual switch')
         self.add_path('/CustomName', device_config.get('CustomName'))
         
-        # We are now using the randomly generated serial number.
         self.add_path('/Serial', serial_number)
         
         self.add_path('/State', 256)
@@ -56,26 +59,44 @@ class DbusMyTestSwitch(VeDbusService):
         self.add_path('/HardwareVersion', 0)
         self.add_path('/Connected', 1)
 
+        # MQTT specific members
+        self.mqtt_client = None
+        self.mqtt_config = mqtt_config
+        self.dbus_path_to_state_topic_map = {}
+        self.dbus_path_to_command_topic_map = {}
+        
         # Loop through the outputs and add their D-Bus paths
         for output_data in output_configs:
             self.add_output(output_data)
+
+        # Initialize and connect the MQTT client
+        self.setup_mqtt_client()
         
-        # Register the service on the D-Bus
+        # Register the service on the D-Bus AFTER all paths have been added
         self.register()
         logger.info(f"Service '{service_name}' for device '{device_config.get('CustomName')}' registered on D-Bus.")
 
     def add_output(self, output_data):
         """
-        Adds a single switchable output and its settings to the D-Bus service.
+        Adds a single switchable output and its settings to the D-Bus service,
+        and stores MQTT topic mappings.
         """
         output_prefix = f'/SwitchableOutput/output_{output_data["index"]}'
+        
+        # Store topic mappings for later use
+        state_topic = output_data.get('MqttStateTopic')
+        command_topic = output_data.get('MqttCommandTopic')
+        dbus_state_path = f'{output_prefix}/State'
+
+        if state_topic and command_topic:
+            self.dbus_path_to_state_topic_map[dbus_state_path] = state_topic
+            self.dbus_path_to_command_topic_map[dbus_state_path] = command_topic
 
         self.add_path(f'{output_prefix}/Name', output_data['name'])
         self.add_path(f'{output_prefix}/Status', 0)
 
         # Add the State path, which will be writable.
-        # Note: The onchangecallback no longer has a _context argument.
-        self.add_path(f'{output_prefix}/State', 0, writeable=True, onchangecallback=self.handle_change)
+        self.add_path(dbus_state_path, 0, writeable=True, onchangecallback=self.handle_dbus_change)
 
         settings_prefix = f'{output_prefix}/Settings'
         self.add_path(f'{settings_prefix}/CustomName', output_data['custom_name'], writeable=True)
@@ -83,40 +104,160 @@ class DbusMyTestSwitch(VeDbusService):
         self.add_path(f'{settings_prefix}/Type', 1, writeable=True)
         self.add_path(f'{settings_prefix}/ValidTypes', 7)
 
-    def handle_change(self, path, value):
+    def setup_mqtt_client(self):
+        """
+        Initializes and starts the MQTT client.
+        """
+        # FIX: Change to use the new Callback API version 2
+        self.mqtt_client = mqtt.Client(
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+            client_id=self['/Serial']
+        )
+        
+        if self.mqtt_config.get('Username'):
+            self.mqtt_client.username_pw_set(
+                self.mqtt_config.get('Username'),
+                self.mqtt_config.get('Password')
+            )
+            
+        self.mqtt_client.on_connect = self.on_mqtt_connect
+        self.mqtt_client.on_message = self.on_mqtt_message
+        self.mqtt_client.on_publish = self.on_mqtt_publish
+        
+        try:
+            self.mqtt_client.connect(
+                self.mqtt_config.get('BrokerAddress'),
+                self.mqtt_config.getint('Port', 1883),
+                60
+            )
+            # Start the MQTT network loop in a separate thread
+            self.mqtt_client.loop_start()
+            logger.info("MQTT client started.")
+        except Exception as e:
+            logger.error(f"Failed to connect to MQTT broker: {e}")
+
+    def on_mqtt_connect(self, client, userdata, flags, rc, properties):
+        """
+        MQTT callback for when the client connects to the broker.
+        Subscribes only to state topics.
+        """
+        if rc == 0:
+            logger.info("Connected to MQTT Broker!")
+            # Subscribe ONLY to state topics
+            state_topics = list(self.dbus_path_to_state_topic_map.values())
+            for topic in state_topics:
+                client.subscribe(topic)
+                logger.info(f"Subscribed to MQTT state topic: {topic}")
+        else:
+            logger.error(f"Failed to connect to MQTT broker, return code {rc}")
+
+    def on_mqtt_message(self, client, userdata, msg):
+        """
+        MQTT callback for when a message is received on a subscribed topic.
+        Handles both 'on'/'off' and '0'/'1' payloads.
+        """
+        try:
+            payload = msg.payload.decode().strip().lower()
+            topic = msg.topic
+            logger.debug(f"Received MQTT message on topic '{topic}': {payload}")
+
+            # Determine the new state based on the payload string
+            if payload == 'on':
+                new_state = 1
+            elif payload == 'off':
+                new_state = 0
+            else:
+                try:
+                    new_state = int(payload)
+                except ValueError:
+                    logger.warning(f"Invalid MQTT payload received: {payload}. Expected 'on', 'off', '0', or '1'.")
+                    return
+            
+            # Find the corresponding D-Bus path for this topic
+            dbus_path = next((k for k, v in self.dbus_path_to_state_topic_map.items() if v == topic), None)
+            
+            if dbus_path:
+                # Check if the state is already the same to prevent redundant D-Bus signals.
+                if self[dbus_path] == new_state:
+                    logger.debug(f"D-Bus state is already {new_state}, ignoring redundant MQTT message.")
+                    return
+                
+                # Use GLib.idle_add to schedule the D-Bus update in the main thread
+                # This will trigger a PropertiesChanged signal on D-Bus.
+                GLib.idle_add(self.update_dbus_from_mqtt, dbus_path, new_state)
+            
+        except (ValueError, KeyError) as e:
+            logger.error(f"Error processing MQTT message: {e}")
+    
+    def on_mqtt_publish(self, client, userdata, mid, reason_code, properties):
+        """
+        MQTT callback for when a publish request has been sent.
+        """
+        logger.debug(f"Publish message with mid: {mid} acknowledged by client.")
+
+    def handle_dbus_change(self, path, value):
         """
         Callback function to handle changes to D-Bus paths.
-        The context argument is often unused and can be omitted.
+        This is triggered when a D-Bus client requests a change.
         """
-        logger.info(f"Received a change request for {path} to value {value}")
+        logger.debug(f"D-Bus change handler triggered for {path} with value {value}")
         
-        # We only expect changes to the /State path
         if "/State" not in path:
-            logger.warning(f"Unhandled change request for path: {path}")
+            logger.warning(f"Unhandled D-Bus change request for path: {path}")
             return False
 
-        # Validate the value
         if value not in [0, 1]:
-            logger.warning(f"Invalid state value received: {value}")
+            logger.warning(f"Invalid D-Bus state value received: {value}. Expected 0 or 1.")
             return False
         
-        # Update the D-Bus value
-        self[path] = value
-        logger.info(f"Successfully changed '{path}' to {value}")
+        # Publish a command to the command topic to control the physical switch
+        self.publish_mqtt_command(path, value)
         
-        # Return True to accept the change
+        # Return True to let the vedbus library update the value and signal the change.
         return True
+
+    def publish_mqtt_command(self, path, value):
+        """
+        Centralized and robust method to publish a command to MQTT.
+        """
+        if not self.mqtt_client or not self.mqtt_client.is_connected():
+            logger.warning("MQTT client is not connected. Cannot publish.")
+            return
+
+        if path not in self.dbus_path_to_command_topic_map:
+            logger.warning(f"No command topic mapped for D-Bus path: {path}")
+            return
+
+        try:
+            command_topic = self.dbus_path_to_command_topic_map[path]
+            mqtt_payload = 'ON' if value == 1 else 'OFF'
+            # Note: Commands are typically not retained
+            (rc, mid) = self.mqtt_client.publish(command_topic, mqtt_payload, retain=False)
+            
+            if rc == mqtt.MQTT_ERR_SUCCESS:
+                logger.debug(f"Publish request for '{path}' sent to command topic '{command_topic}'. mid: {mid}")
+            else:
+                logger.error(f"Failed to publish to '{command_topic}', return code: {rc}")
+        except Exception as e:
+            logger.error(f"Error during MQTT publish: {e}")
+            
+    def update_dbus_from_mqtt(self, path, value):
+        """
+        A centralized method to handle MQTT-initiated state changes to D-Bus.
+        """
+        self[path] = value
+        logger.debug(f"Successfully changed '{path}' to {value} from source: mqtt")
+        
+        return False # Return False for GLib.idle_add to run only once
 
 def run_device_service(device_index):
     """
     Main function for a single D-Bus service process.
     """
-    # Setup D-Bus main loop
     from dbus.mainloop.glib import DBusGMainLoop
     DBusGMainLoop(set_as_default=True)
     
     config_file_path = os.path.join(os.path.dirname(__file__), 'config.ini')
-    
     config = configparser.ConfigParser()
     if not os.path.exists(config_file_path):
         logger.critical(f"Configuration file not found: {config_file_path}")
@@ -127,6 +268,25 @@ def run_device_service(device_index):
     except configparser.Error as e:
         logger.critical(f"Error parsing configuration file: {e}")
         sys.exit(1)
+        
+    # Mapping for log levels
+    LOG_LEVELS = {
+        'DEBUG': logging.DEBUG,
+        'INFO': logging.INFO,
+        'WARNING': logging.WARNING,
+        'ERROR': logging.ERROR,
+        'CRITICAL': logging.CRITICAL
+    }
+    
+    # Get log level from config, default to INFO if not found or invalid
+    if config.has_section('Global'):
+        log_level_str = config['Global'].get('LogLevel', 'INFO').upper()
+        log_level = LOG_LEVELS.get(log_level_str, logging.INFO)
+    else:
+        log_level = logging.INFO
+        
+    logger.setLevel(log_level)
+    logger.info(f"Log level set to: {logging.getLevelName(logger.level)}")
 
     device_section = f'Device_{device_index}'
     if not config.has_section(device_section):
@@ -138,35 +298,39 @@ def run_device_service(device_index):
     try:
         num_switches = device_config.getint('NumberOfSwitches')
     except (configparser.NoOptionError, ValueError):
-        logger.warning(f"No 'NumberOfSwitches' found for {device_section}. Defaulting to 1 switch.")
+        logger.warning("No 'NumberOfSwitches' found in [Global] section. Defaulting to 1 switch.")
         num_switches = 1
 
     output_configs = []
     for j in range(1, num_switches + 1):
         output_section = f'Output_{device_index}_{j}'
         
-        if not config.has_section(output_section):
-            custom_name = ''
-            group = ''
-        else:
-            output_settings = config[output_section]
-            custom_name = output_settings.get('CustomName', '')
-            group = output_settings.get('Group', '')
-        
         output_data = {
             'index': j,
             'name': f'Switch {j}',
-            'custom_name': custom_name,
-            'group': group,
+            'custom_name': '',
+            'group': '',
+            'MqttStateTopic': None,
+            'MqttCommandTopic': None,
         }
+
+        if config.has_section(output_section):
+            output_settings = config[output_section]
+            output_data['custom_name'] = output_settings.get('CustomName', '')
+            output_data['group'] = output_settings.get('Group', '')
+            output_data['MqttStateTopic'] = output_settings.get('MqttStateTopic', None)
+            output_data['MqttCommandTopic'] = output_settings.get('MqttCommandTopic', None)
+        
         output_configs.append(output_data)
 
-    # Generate a random serial number
     random_serial = generate_random_serial()
-    
-    # Use the random serial number for the D-Bus service name
     service_name = f'com.victronenergy.switch.virtual_{random_serial}'
-    DbusMyTestSwitch(service_name, device_config, output_configs, random_serial)
+
+    # Get MQTT configuration
+    mqtt_config = config['MQTT'] if config.has_section('MQTT') else {}
+
+    # Pass the MQTT config to the DbusMyTestSwitch class
+    DbusMyTestSwitch(service_name, device_config, output_configs, random_serial, mqtt_config)
     
     logger.info('Connected to D-Bus, and switching over to GLib.MainLoop() (= event based)')
     
@@ -178,7 +342,6 @@ def main():
     The main launcher function that runs as the parent process.
     """
     config_file_path = os.path.join(os.path.dirname(__file__), 'config.ini')
-    
     config = configparser.ConfigParser()
     if not os.path.exists(config_file_path):
         logger.critical(f"Configuration file not found: {config_file_path}")
@@ -186,10 +349,28 @@ def main():
     
     try:
         config.read(config_file_path)
-        logger.info(f"Configuration file '{config_file_path}' loaded successfully.")
     except configparser.Error as e:
         logger.critical(f"Error parsing configuration file: {e}")
         sys.exit(1)
+    
+    # Mapping for log levels
+    LOG_LEVELS = {
+        'DEBUG': logging.DEBUG,
+        'INFO': logging.INFO,
+        'WARNING': logging.WARNING,
+        'ERROR': logging.ERROR,
+        'CRITICAL': logging.CRITICAL
+    }
+    
+    # Get log level from config, default to INFO if not found or invalid
+    if config.has_section('Global'):
+        log_level_str = config['Global'].get('LogLevel', 'INFO').upper()
+        log_level = LOG_LEVELS.get(log_level_str, logging.INFO)
+    else:
+        log_level = logging.INFO
+    
+    logger.setLevel(log_level)
+    logger.info(f"Log level set to: {logging.getLevelName(logger.level)}")
 
     try:
         num_devices = config.getint('Global', 'NumberOfDevices')
@@ -197,9 +378,7 @@ def main():
         logger.warning("No 'NumberOfDevices' found in [Global] section. Defaulting to 1 device.")
         num_devices = 1
 
-    # Get the path to the current script
     script_path = os.path.abspath(sys.argv[0])
-    
     processes = []
     
     logger.info(f"Starting {num_devices} virtual switch device processes...")
@@ -211,7 +390,6 @@ def main():
             logger.warning(f"Configuration section '{device_section}' not found. Skipping device {i}.")
             continue
             
-        # We pass the device index to the child process via command-line argument.
         cmd = [sys.executable, script_path, str(i)]
         
         try:
@@ -222,10 +400,8 @@ def main():
             logger.error(f"Failed to start process for device {i}: {e}")
             
     try:
-        # Keep the launcher process running.
         while True:
             time.sleep(1)
-            
     except KeyboardInterrupt:
         logger.info("Terminating all child processes.")
         for p in processes:
@@ -234,10 +410,7 @@ def main():
             p.wait()
 
 if __name__ == "__main__":
-    # Check if a command-line argument was provided
     if len(sys.argv) > 1:
-        # If so, this is a child process. Run the service.
         run_device_service(sys.argv[1])
     else:
-        # Otherwise, this is the main launcher process.
         main()
