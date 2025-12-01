@@ -239,6 +239,7 @@ def prompt_run_script(script_path, script_name, action_desc):
         else:
             print("Invalid option. Please enter 1 or 2.")
 
+
 def handle_config_edit_and_install(driver_dir, driver_name):
     """Handles the two-stage interactive first-install for auto_current/gps_socat."""
     action_type = "alter the settings for your generator" if driver_name == "auto_current" else "verify settings"
@@ -255,14 +256,22 @@ def handle_config_edit_and_install(driver_dir, driver_name):
         config_choice = input("\nSelect an option (1 or 2): ")
         if config_choice == '1':
             print("\n=====================================================================")
-            print("⚠️ **MANUAL STEP REQUIRED: Edit Config** ⚠️")
-            print(f"Please manually edit the config file in another terminal:")
-            print(f"Path: {config_file}")
-            print("Press ENTER here *after* you have finished editing and saved the file.")
+            print(f"🚀 Launching Nano Editor for: **{config_file}**")
+            print("Please edit the required settings and save/exit (Ctrl+X).")
             print("=====================================================================")
-            input() # Wait for user to confirm they edited
             
-            # User has finished editing, now prompt for install.sh
+            # --- KEY CHANGE: Launch nano in the current terminal ---
+            try:
+                # The subprocess call blocks execution until the user exits nano
+                subprocess.run(["nano", config_file], check=True)
+                print("\n✅ Configuration file edited and saved.")
+            except FileNotFoundError:
+                print("\n❌ Error: The 'nano' editor was not found. Please install it or edit the file manually.")
+                # We still proceed to the install step, assuming the user will handle the config
+            except subprocess.CalledProcessError:
+                print("\n⚠️ Warning: The editor exited with an error. Please verify the config file manually.")
+            
+            # Now proceed to the install script prompt
             prompt_run_script(install_script, "install.sh", "activate the new installation")
             break
         elif config_choice == '2':
