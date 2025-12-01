@@ -11,9 +11,6 @@ GITHUB_USER = "drtinaz"
 TEMP_DIR = "/tmp"
 
 # Define drivers and their config behavior
-# 'config_type':
-#   'full_config': Config.ini is backed up/restored during update. 
-#   'none': No config file handling needed.
 DRIVER_CONFIGS = {
     1: {"name": "auto_current", "config_type": "full_config"}, 
     2: {"name": "auto_switch", "config_type": "none"},
@@ -22,7 +19,7 @@ DRIVER_CONFIGS = {
     5: {"name": "transfer_switch", "config_type": "none"},
 }
 
-# --- Helper Functions (No Functional Changes unless noted) ---
+# --- Helper Functions ---
 
 def get_latest_versions(driver_name):
     """Fetches the latest stable and beta version tags from GitHub."""
@@ -35,7 +32,6 @@ def get_latest_versions(driver_name):
         print(f"Error fetching version numbers for {driver_name}: {e}")
         return None, None
 
-    # Latest Stable (using 'latest' release endpoint logic)
     stable_tag = None
     try:
         latest_release_url = f"https://api.github.com/repos/{GITHUB_USER}/{driver_name}/releases/latest"
@@ -44,7 +40,6 @@ def get_latest_versions(driver_name):
     except Exception:
         pass
 
-    # Latest Beta/RC
     beta_tag = None
     for release in releases:
         tag = release.get("tag_name", "")
@@ -104,12 +99,11 @@ def select_version(driver_name, stable_tag, beta_tag):
             if 0 <= choice_num < len(version_options) - 1:
                 selected_tag = version_options[choice_num][1]
                 
-                # Determine download URL
                 if selected_tag == stable_tag:
                     api_url = f"https://api.github.com/repos/{GITHUB_USER}/{driver_name}/releases/latest"
                     response = requests.get(api_url).json()
                     download_url = response.get("zipball_url")
-                else: # Beta/RC
+                else: 
                     download_url = f"https://api.github.com/repos/{GITHUB_USER}/{driver_name}/zipball/{selected_tag}"
                     
                 if not download_url:
@@ -147,9 +141,8 @@ def handle_config_restore(driver_dir, driver_name):
         return True
     return False
 
-# --- MODIFIED: Simplified to only handle file creation/config.py execution ---
 def handle_first_run_config(driver_dir, driver_name):
-    """Handles first-run config file creation or config.py execution."""
+    """Handles initial config file creation or config.py execution."""
     config_file = os.path.join(driver_dir, "config.ini")
     
     if os.path.isfile(config_file):
@@ -172,7 +165,7 @@ def handle_first_run_config(driver_dir, driver_name):
         print("⚠️ FIRST INSTALLATION DETECTED FOR external_devices ⚠️")
         print("The driver requires initial configuration.")
         print("1) Run **config.py** now to configure devices (Recommended)")
-        print("2) Run **config.py** manually later (Exit to main menu)")
+        print("2) Defer running **config.py** for later")
         print("=====================================================================")
         
         while True:
@@ -180,7 +173,6 @@ def handle_first_run_config(driver_dir, driver_name):
             if choice == '1':
                 print(f"\nLaunching configuration script: python {config_script_path}...")
                 try:
-                    # Execute config.py and wait for it to finish
                     subprocess.run(["python", config_script_path], check=True, cwd=driver_dir)
                     print("\nConfiguration completed. Returning to installer.")
                 except subprocess.CalledProcessError as e:
@@ -206,15 +198,9 @@ def set_permissions(driver_dir, driver_name):
     """Sets executable permissions for relevant files."""
     print("Setting permissions for files...")
     
-    # List of files to make executable (relative paths)
     executables = [
-        f"{driver_name}.py",
-        "install.sh",
-        "restart.sh",
-        "uninstall.sh",
-        "config.py",
-        "service/run",
-        "service/log/run",
+        f"{driver_name}.py", "install.sh", "restart.sh", "uninstall.sh", 
+        "config.py", "service/run", "service/log/run",
     ]
 
     for file_name in executables:
@@ -222,7 +208,73 @@ def set_permissions(driver_dir, driver_name):
         if os.path.exists(file_path):
             os.chmod(file_path, 0o755)
 
-# --- NEW: Function to handle final prompts and actions ---
+def prompt_run_script(script_path, script_name, action_desc):
+    """Presents the user with a 'Run now or defer' option for a shell script."""
+    
+    print("\n=====================================================================")
+    print(f"The next step is to run {script_name} to {action_desc}.")
+    print(f"1) Run **{script_name}** now (Recommended)")
+    print(f"2) Defer running **{script_name}** for later")
+    print("=====================================================================")
+
+    while True:
+        choice = input(f"\nSelect an option (1 or 2): ")
+        if choice == '1':
+            if os.path.exists(script_path):
+                print(f"\nLaunching script: /bin/bash {script_path}...")
+                try:
+                    subprocess.run(["/bin/bash", script_path], check=True)
+                    print(f"\n{script_name} executed successfully.")
+                except subprocess.CalledProcessError as e:
+                    print(f"\nScript failed with error: {e}")
+                    print("You may need to check the script manually.")
+                except FileNotFoundError:
+                    print(f"\nError: /bin/bash interpreter or {script_name} not found.")
+            else:
+                print(f"Error: Script {script_name} not found. Cannot run automatically.")
+            break
+        elif choice == '2':
+            print(f"\nAction deferred. Remember to run: /bin/bash {script_path} later.")
+            break
+        else:
+            print("Invalid option. Please enter 1 or 2.")
+
+def handle_config_edit_and_install(driver_dir, driver_name):
+    """Handles the two-stage interactive first-install for auto_current/gps_socat."""
+    action_type = "alter the settings for your generator" if driver_name == "auto_current" else "verify settings"
+    config_file = os.path.join(driver_dir, "config.ini")
+    install_script = os.path.join(driver_dir, "install.sh")
+
+    print("\n" * 2)
+    print("--- First Install Configuration ---")
+    print(f"Configuration required for **{driver_name}**.")
+    print(f"1) Edit **{config_file}** now (to {action_type})")
+    print(f"2) Defer configuration for later")
+
+    while True:
+        config_choice = input("\nSelect an option (1 or 2): ")
+        if config_choice == '1':
+            print("\n=====================================================================")
+            print("⚠️ **MANUAL STEP REQUIRED: Edit Config** ⚠️")
+            print(f"Please manually edit the config file in another terminal:")
+            print(f"Path: {config_file}")
+            print("Press ENTER here *after* you have finished editing and saved the file.")
+            print("=====================================================================")
+            input() # Wait for user to confirm they edited
+            
+            # User has finished editing, now prompt for install.sh
+            prompt_run_script(install_script, "install.sh", "activate the new installation")
+            break
+        elif config_choice == '2':
+            # Defer config edit and install
+            print("\nConfiguration deferred. Remember to run the following commands:")
+            print(f"1. **Edit config**: `nano {config_file}`")
+            print(f"2. **Run install**: `/bin/bash {install_script}`")
+            break
+        else:
+            print("Invalid option. Please enter 1 or 2.")
+
+
 def handle_post_install_actions(driver_dir, driver_name, is_update):
     """Handles the final prompts (editing config/running install/restart) based on driver state."""
     print("\n" * 2)
@@ -231,62 +283,32 @@ def handle_post_install_actions(driver_dir, driver_name, is_update):
     install_script = os.path.join(driver_dir, "install.sh")
     restart_script = os.path.join(driver_dir, "restart.sh")
 
-    if driver_name in ["auto_current", "gps_socat"]:
-        if not is_update:
-            # First Install: Prompt to edit config.ini and run install.sh
-            action_type = "alter the settings for their generator" if driver_name == "auto_current" else "verify settings"
-            
-            print("=====================================================================")
-            print(f"✅ Installation Complete. Now for the setup steps:")
-            print(f"1. **Edit config.ini**: You must {action_type} in:")
-            print(f"   {driver_dir}/config.ini")
-            print(f"2. **Run install.sh**: Execute the following command to complete setup:")
-            print(f"   /bin/bash {install_script}")
-            print("=====================================================================")
+    if is_update:
+        # ALL Updates: Run restart script (non-interactive)
+        if os.path.exists(restart_script):
+            print(f"Update detected. Restarting driver by running: /bin/bash {restart_script}")
+            subprocess.run(["/bin/bash", restart_script])
         else:
-            # Update: Run restart.sh
-            if os.path.exists(restart_script):
-                print(f"Update detected. Restarting driver by running:")
-                subprocess.run(["/bin/bash", restart_script])
-            else:
-                print(f"Update detected, but {restart_script} not found. Driver may require manual restart.")
+            print(f"Update detected, but {restart_script} not found. Driver may require manual restart.")
 
-    elif driver_name == "external_devices":
-        # External devices first-install instructions were given by handle_first_run_config.
-        if is_update:
-            # Update: Run restart.sh
-            if os.path.exists(restart_script):
-                print(f"Update detected. Restarting driver by running:")
-                subprocess.run(["/bin/bash", restart_script])
-            else:
-                print(f"Update detected, but {restart_script} not found. Driver may require manual restart.")
-        else:
-            # First Install: Acknowledgment that config steps were handled/deferred.
+    else: # First Install
+        if driver_name in ["auto_current", "gps_socat"]:
+            handle_config_edit_and_install(driver_dir, driver_name)
+
+        elif driver_name == "external_devices":
+            # Config was handled/deferred by handle_first_run_config
             print("✅ Installation complete. The configuration steps for this driver have been handled or deferred.")
             print("Remember to run config.py and install.sh if you deferred configuration.")
 
-
-    elif driver_name in ["auto_switch", "transfer_switch"]:
-        # Logic for no-config drivers (auto_switch, transfer_switch)
-        if not is_update:
-            # First Install: Prompt to run install.sh
-            print("=====================================================================")
-            print(f"✅ First Installation Complete. Run the install script to activate:")
-            print(f"   /bin/bash {install_script}")
-            print("=====================================================================")
-        else:
-            # Update: Run restart.sh
-            if os.path.exists(restart_script):
-                print(f"Update detected. Restarting driver by running:")
-                subprocess.run(["/bin/bash", restart_script])
-            else:
-                print(f"Update detected, but {restart_script} not found. Driver may require manual restart.")
+        elif driver_name in ["auto_switch", "transfer_switch"]:
+            # Use the generic prompt_run_script for first install
+            prompt_run_script(install_script, "install.sh", "activate the new installation")
     
     print("\n" * 2)
     print(f"✅ Installation/Update of **{driver_name}** Complete. Returning to main menu.")
     print("\n" * 2)
 
-# --- Installation Function (Logic Reordered for the last time) ---
+# --- Installation Function ---
 
 def run_installation(driver_name, config_type):
     """Handles the full installation/update process for a single driver."""
@@ -294,17 +316,13 @@ def run_installation(driver_name, config_type):
     
     # 1. Fetch Versions and Select Version
     stable_tag, beta_tag = get_latest_versions(driver_name)
-    if not stable_tag and not beta_tag:
-        print("Could not retrieve version information. Returning to main menu.")
-        return
+    if not stable_tag and not beta_tag: return
 
     selected_tag, download_url = select_version(driver_name, stable_tag, beta_tag)
-    if not selected_tag: # User cancelled selection
-        return
+    if not selected_tag: return
 
     # 2. Pre-transfer Setup
     print(f"\n--- Installation Process for {driver_name} ({selected_tag}) ---")
-    
     is_update = os.path.isdir(driver_dir)
     status_msg = "Updating" if is_update else "Installing"
     print(f"{status_msg} driver '{driver_name}'...")
@@ -314,16 +332,13 @@ def run_installation(driver_name, config_type):
     source_folder = None
     
     try:
-        # Download and Unzip Logic (omitted for brevity, assume success)
         print(f"Downloading from: {download_url}")
         with requests.get(download_url, stream=True) as r:
             r.raise_for_status()
             with open(zip_path, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
+                for chunk in r.iter_content(chunk_size=8192): f.write(chunk)
     except requests.exceptions.RequestException as e:
-        print(f"Download failed. Error: {e}")
-        return
+        print(f"Download failed. Error: {e}"); return
 
     try:
         print("Unzipping driver...")
@@ -335,8 +350,7 @@ def run_installation(driver_name, config_type):
             extracted_folder_name = [d for d in extracted_contents if os.path.isdir(os.path.join(extract_dir, d))][0]
             source_folder = os.path.join(extract_dir, extracted_folder_name)
     except Exception as e:
-        print(f"Unzip failed. Error: {e}")
-        return
+        print(f"Unzip failed. Error: {e}"); return
 
     # 3. Config Backup (BEFORE cleaning up the old folder)
     config_backed_up = False
@@ -349,28 +363,24 @@ def run_installation(driver_name, config_type):
         try:
             shutil.rmtree(driver_dir)
         except OSError as e:
-            print(f"Error cleaning up old driver files: {e}. Aborting installation.")
-            return
+            print(f"Error cleaning up old driver files: {e}. Aborting installation."); return
             
     print("Copying new driver files...")
     if source_folder:
         shutil.move(source_folder, driver_dir)
     else:
-        print("Error: Could not find extracted source folder. Installation aborted.")
-        return
+        print("Error: Could not find extracted source folder. Installation aborted."); return
 
     # 5. Set Permissions 
     set_permissions(driver_dir, driver_name)
 
-    # 6. Final Config Steps (AFTER permissions are set)
+    # 6. Final Config Steps
     config_restored = False
     if config_type == 'full_config':
-        # Restore backed-up config if it exists
         if config_backed_up:
             config_restored = handle_config_restore(driver_dir, driver_name)
-        
-        # Handle first-run logic (only runs if config.ini was NOT restored)
         if not config_restored and not is_update:
+            # Only run config file creation on first install if not restored
             handle_first_run_config(driver_dir, driver_name)
 
     # 7. Final Action (Install/Restart/Prompt)
@@ -378,10 +388,8 @@ def run_installation(driver_name, config_type):
     
     # 8. Cleanup Temp Files
     print("\nCleaning up temp files...")
-    if os.path.exists(extract_dir):
-        shutil.rmtree(extract_dir, ignore_errors=True) 
-    if os.path.exists(zip_path):
-        os.remove(zip_path)
+    if os.path.exists(extract_dir): shutil.rmtree(extract_dir, ignore_errors=True) 
+    if os.path.exists(zip_path): os.remove(zip_path)
 
 
 # --- Main Loop ---
@@ -393,7 +401,6 @@ def main():
         driver_name, config_type = select_driver()
         
         if driver_name is None:
-            # The user selected 'Exit Script'
             break
             
         run_installation(driver_name, config_type)
@@ -403,4 +410,4 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print("\nScript interrupted by user. Exiting.")
-      
+        
