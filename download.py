@@ -72,10 +72,16 @@ def select_driver():
         except ValueError:
             print("Invalid input. Please enter a number.")
 
-def select_version(driver_name, stable_tag, beta_tag):
-    """Presents a version menu and returns the selected tag and download URL."""
+def select_version(driver_name, stable_tag, beta_tag, installed_tag=None):
+    """
+    Presents a version menu and returns the selected tag and download URL.
+    - Added installed_tag parameter to display current version.
+    """
     print("\n--- Version Selection ---")
     
+    if installed_tag:
+        print(f"**Installed version is: {installed_tag}**")
+
     version_options = []
     if stable_tag:
         version_options.append((f"Latest Stable Release: {stable_tag}", stable_tag))
@@ -113,7 +119,7 @@ def select_version(driver_name, stable_tag, beta_tag):
                 print(f"> Selected version: {selected_tag}")
                 return selected_tag, download_url
                 
-            elif version_options[choice_num][0] == "Quit/Cancel Installation":
+            elif choice_num >= 0 and version_options[choice_num][0] == "Quit/Cancel Installation":
                 print("Installation cancelled. Returning to main menu.")
                 return None, None
             else:
@@ -322,17 +328,29 @@ def handle_post_install_actions(driver_dir, driver_name, is_update):
 def run_installation(driver_name, config_type):
     """Handles the full installation/update process for a single driver."""
     driver_dir = os.path.join(DRIVER_PATH, driver_name)
+    is_update = os.path.isdir(driver_dir)
+    installed_tag = None
     
+    # Check for installed version if directory exists
+    if is_update:
+        version_file = os.path.join(driver_dir, "version")
+        if os.path.exists(version_file):
+            try:
+                with open(version_file, 'r') as f:
+                    installed_tag = f.read().strip()
+            except Exception as e:
+                print(f"Warning: Could not read existing version file: {e}")
+
     # 1. Fetch Versions and Select Version
     stable_tag, beta_tag = get_latest_versions(driver_name)
     if not stable_tag and not beta_tag: return
 
-    selected_tag, download_url = select_version(driver_name, stable_tag, beta_tag)
+    # Pass the installed_tag to the select_version function
+    selected_tag, download_url = select_version(driver_name, stable_tag, beta_tag, installed_tag=installed_tag)
     if not selected_tag: return
 
     # 2. Pre-transfer Setup
     print(f"\n--- Installation Process for {driver_name} ({selected_tag}) ---")
-    is_update = os.path.isdir(driver_dir)
     status_msg = "Updating" if is_update else "Installing"
     print(f"{status_msg} driver '{driver_name}'...")
     
