@@ -17,6 +17,7 @@ DRIVER_CONFIGS = {
     3: {"name": "gps_socat", "config_type": "full_config"},    
     4: {"name": "external_devices", "config_type": "full_config"}, 
     5: {"name": "transfer_switch", "config_type": "none"},
+    6: {"name": "mp2_emulator", "config_type": "full_config"},
 }
 
 # --- Helper Functions ---
@@ -55,11 +56,11 @@ def select_driver():
     while True:
         for num, driver_info in DRIVER_CONFIGS.items():
             print(f"{num}) {driver_info['name']}")
-        print("6) Exit Script")
+        print("7) Exit Script")
         
-        choice = input("\nSelect a driver to install (1-5) or 6 to exit: ")
+        choice = input("\nSelect a driver to install (1-6) or 7 to exit: ")
         
-        if choice == '6':
+        if choice == '7':
             print("Exiting script.")
             return None, None
             
@@ -154,7 +155,7 @@ def handle_first_run_config(driver_dir, driver_name):
     if os.path.isfile(config_file):
         return
         
-    if driver_name in ["auto_current", "gps_socat"]:
+    if driver_name in ["auto_current", "gps_socat", "mp2_emulator"]:
         # Create config.ini from config.sample.ini
         sample_file = os.path.join(driver_dir, "config.sample.ini")
         if os.path.isfile(sample_file):
@@ -247,7 +248,7 @@ def prompt_run_script(script_path, script_name, action_desc):
 
 
 def handle_config_edit_and_install(driver_dir, driver_name):
-    """Handles the two-stage interactive first-install for auto_current/gps_socat."""
+    """Handles the two-stage interactive first-install for auto_current/gps_socat/mp2_emulator."""
     action_type = "alter the settings for your generator" if driver_name == "auto_current" else "verify settings"
     config_file = os.path.join(driver_dir, "config.ini")
     install_script = os.path.join(driver_dir, "install.sh")
@@ -307,7 +308,7 @@ def handle_post_install_actions(driver_dir, driver_name, is_update):
             print(f"Update detected, but {restart_script} not found. Driver may require manual restart.")
 
     else: # First Install
-        if driver_name in ["auto_current", "gps_socat"]:
+        if driver_name in ["auto_current", "gps_socat", "mp2_emulator"]:
             handle_config_edit_and_install(driver_dir, driver_name)
 
         elif driver_name == "external_devices":
