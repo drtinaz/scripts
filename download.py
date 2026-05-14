@@ -23,7 +23,7 @@ DRIVER_CONFIGS = {
 # --- Helper Functions ---
 
 def get_latest_versions(driver_name):
-    """Fetches the latest stable and beta version tags from GitHub."""
+    """Fetches the latest stable and beta version tags from GitHub, plus previous releases."""
     api_url = f"https://api.github.com/repos/{GITHUB_USER}/{driver_name}/releases"
     try:
         response = requests.get(api_url)
@@ -31,7 +31,7 @@ def get_latest_versions(driver_name):
         releases = response.json()
     except requests.exceptions.RequestException as e:
         print(f"Error fetching version numbers for {driver_name}: {e}")
-        return None, None
+        return None, None, []
 
     stable_tag = None
     try:
@@ -42,13 +42,26 @@ def get_latest_versions(driver_name):
         pass
 
     beta_tag = None
+    previous_versions = []
+    
     for release in releases:
         tag = release.get("tag_name", "")
-        if re.search(r'(rc|beta)', tag, re.IGNORECASE):
-            beta_tag = tag
-            break
+        # Skip draft releases
+        if release.get("draft", False):
+            continue
             
-    return stable_tag, beta_tag
+        if re.search(r'(rc|beta)', tag, re.IGNORECASE):
+            if beta_tag is None:
+                beta_tag = tag
+        else:
+            # Collect stable releases (excluding the latest stable)
+            if tag != stable_tag:
+                previous_versions.append(tag)
+    
+    # Return the 3 most recent previous versions
+    previous_versions = previous_versions[:3]
+    
+    return stable_tag, beta_tag, previous_versions
 
 def select_driver():
     """Presents a menu and returns the selected driver name and config type."""
@@ -73,10 +86,11 @@ def select_driver():
         except ValueError:
             print("Invalid input. Please enter a number.")
 
-def select_version(driver_name, stable_tag, beta_tag, installed_tag=None):
+def select_version(driver_name, stable_tag, beta_tag, previous_versions, installed_tag=None):
     """
     Presents a version menu and returns the selected tag and download URL.
     - Added installed_tag parameter to display current version.
+    - Added previous_versions to allow installing older releases.
     """
     print("\n--- Version Selection ---")
     
@@ -85,29 +99,75 @@ def select_version(driver_name, stable_tag, beta_tag, installed_tag=None):
 
     version_options = []
     if stable_tag:
-        version_options.append((f"Latest Stable Release: {stable_tag}", stable_tag))
+        version_options.append((f"Latest Stable Release: {stable_tag}", stable_tag, "stable"))
     if beta_tag:
-        version_options.append((f"Latest Beta/RC Build: {beta_tag}", beta_tag))
-
-    if not version_options:
-        print("Could not fetch any stable or beta version tags. Returning to main menu.")
-        return None, None
-
-    version_options.append(("Quit/Cancel Installation", None))
+        version_options.append((f"Latest Beta/RC Build: {beta_tag}", beta_tag, "beta"))
+    
+    # Add previous versions if available
+    if previous_versions:
+        version_options.append(("--- Previous Versions ---", None, "separator"))
+        for prev_tag in previous_versions:
+            version_options.append((f"Previous Version: {prev_tag}", prev_tag, "previous"))
+    
+    # Add custom version input option
+    version_options.append(("Enter a specific version/tag manually", None, "custom"))
+    version_options.append(("Quit/Cancel Installation", None, "quit"))
 
     while True:
-        for i, (label, tag) in enumerate(version_options, 1):
-            print(f"{i}) {label}")
+        for i, (label, tag, _) in enumerate(version_options, 1):
+            # Skip printing separator lines as numbered options
+            if tag is None and label.startswith("---"):
+                print(f"\n{label}")
+            else:
+                print(f"{i}) {label}")
         
         choice = input("\nSelect which version you want to install: ")
         
         try:
             choice_num = int(choice) - 1
-            if 0 <= choice_num < len(version_options) - 1:
-                selected_tag = version_options[choice_num][1]
+            if 0 <= choice_num < len(version_options):
+                selected_label, selected_tag, selected_type = version_options[choice_num]
                 
-                if selected_tag == stable_tag:
+                # Handle separator - can't select it
+                if selected_type == "separator":
+                    print("Please select a valid version option.")
+                    continue
+                
+                # Handle quit
+                if selected_type == "quit":
+                    print("Installation cancelled. Returning to main menu.")
+                    return None, None
+                
+                # Handle custom version input
+                if selected_type == "custom":
+                    custom_tag = input("\nEnter the exact version tag to install (e.g., v1.2.3): ").strip()
+                    if not custom_tag:
+                        print("No version entered. Returning to version selection.")
+                        continue
+                    
+                    # Verify the tag exists
+                    verify_url = f"https://api.github.com/repos/{GITHUB_USER}/{driver_name}/releases/tags/{custom_tag}"
+                    try:
+                        verify_response = requests.get(verify_url)
+                        if verify_response.status_code == 200:
+                            selected_tag = custom_tag
+                            print(f"> Selected custom version: {selected_tag}")
+                        else:
+                            print(f"Error: Tag '{custom_tag}' not found for repository {driver_name}.")
+                            print("Please check the tag name and try again.")
+                            continue
+                    except requests.exceptions.RequestException as e:
+                        print(f"Error verifying tag: {e}")
+                        continue
+                
+                # Determine download URL based on tag type
+                if selected_tag == stable_tag or (selected_type == "stable"):
                     api_url = f"https://api.github.com/repos/{GITHUB_USER}/{driver_name}/releases/latest"
+                    response = requests.get(api_url).json()
+                    download_url = response.get("zipball_url")
+                elif selected_type == "custom":
+                    # For custom tags, we need to get the release info
+                    api_url = f"https://api.github.com/repos/{GITHUB_USER}/{driver_name}/releases/tags/{selected_tag}"
                     response = requests.get(api_url).json()
                     download_url = response.get("zipball_url")
                 else: 
@@ -119,10 +179,6 @@ def select_version(driver_name, stable_tag, beta_tag, installed_tag=None):
                     
                 print(f"> Selected version: {selected_tag}")
                 return selected_tag, download_url
-                
-            elif choice_num >= 0 and version_options[choice_num][0] == "Quit/Cancel Installation":
-                print("Installation cancelled. Returning to main menu.")
-                return None, None
             else:
                 print("Invalid option. Please enter a valid number.")
         except (ValueError, IndexError):
@@ -332,7 +388,7 @@ def run_installation(driver_name, config_type):
     is_update = os.path.isdir(driver_dir)
     installed_tag = None
     
-    # Check for installed version if directory exists
+    # Check for installed version if directory exists (reading from existing version file)
     if is_update:
         version_file = os.path.join(driver_dir, "version")
         if os.path.exists(version_file):
@@ -343,11 +399,13 @@ def run_installation(driver_name, config_type):
                 print(f"Warning: Could not read existing version file: {e}")
 
     # 1. Fetch Versions and Select Version
-    stable_tag, beta_tag = get_latest_versions(driver_name)
-    if not stable_tag and not beta_tag: return
+    stable_tag, beta_tag, previous_versions = get_latest_versions(driver_name)
+    if not stable_tag and not beta_tag and not previous_versions:
+        print(f"Could not fetch any version information for {driver_name}. Please check the repository name.")
+        return
 
-    # Pass the installed_tag to the select_version function
-    selected_tag, download_url = select_version(driver_name, stable_tag, beta_tag, installed_tag=installed_tag)
+    # Pass the installed_tag and previous_versions to the select_version function
+    selected_tag, download_url = select_version(driver_name, stable_tag, beta_tag, previous_versions, installed_tag=installed_tag)
     if not selected_tag: return
 
     # 2. Pre-transfer Setup
@@ -438,4 +496,3 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print("\nScript interrupted by user. Exiting.")
-        
