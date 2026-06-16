@@ -70,11 +70,11 @@ def select_driver():
     while True:
         for num, driver_info in DRIVER_CONFIGS.items():
             print(f"{num}) {driver_info['name']}")
-        print("7) Exit Script")
+        print("8) Exit Script")
         
-        choice = input("\nSelect a driver to install (1-6) or 7 to exit: ")
+        choice = input("\nSelect a driver to install (1-7) or 8 to exit: ")
         
-        if choice == '7':
+        if choice == '8':
             print("Exiting script.")
             return None, None
             
@@ -83,7 +83,7 @@ def select_driver():
             if choice_num in DRIVER_CONFIGS:
                 return DRIVER_CONFIGS[choice_num]['name'], DRIVER_CONFIGS[choice_num]['config_type']
             else:
-                print(f"Invalid option: {choice}. Please enter a number between 1 and 6.")
+                print(f"Invalid option: {choice}. Please enter a number between 1 and 7.")
         except ValueError:
             print("Invalid input. Please enter a number.")
 
