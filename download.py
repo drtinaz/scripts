@@ -83,7 +83,7 @@ def select_driver():
             if choice_num in DRIVER_CONFIGS:
                 return DRIVER_CONFIGS[choice_num]['name'], DRIVER_CONFIGS[choice_num]['config_type']
             else:
-                print(f"Invalid option: {choice}. Please enter a number between 1 and 7.")
+                print(f"Invalid option: {choice}. Please enter a number between 1 and 8.")
         except ValueError:
             print("Invalid input. Please enter a number.")
 
